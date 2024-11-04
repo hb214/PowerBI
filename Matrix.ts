@@ -530,33 +530,32 @@ export class Matrix {
     this.columnDefs = columnDefs;
   }
 
-  private static buildRowData(matrix, columnDefs, rowData, dynamicHeader) {
-    // Declare the rowObj variable to be pushed into rowData. Resets every loop
-    let valueSourcesIndexBackUp = 0;  
+  private static processRowData(matrix, columnDefs, rowData) {
+    let valueSourcesIndexBackUp = 0;
 
     matrix.rows.root.children.forEach((row) => {
-      const identityHolder = [];
       const rowObj = {};
+      const identityHolder = [];
 
       if (row.isSubtotal !== true) {
         identityHolder.push(row);
       }
       rowObj['identity'] = identityHolder;
 
+      // Case 1: Handle rows with values and no childIdentityFields
       if (
         Object.prototype.hasOwnProperty.call(row, 'values') &&
         !Object.prototype.hasOwnProperty.call(matrix.columns.root, 'childIdentityFields') &&
         !Object.prototype.hasOwnProperty.call(matrix.rows.root, 'childIdentityFields')
       ) {
-        const rowValues = row.values as {[key: string]: any};
+        const rowValues = row.values as { [key: string]: any };
         let index = 0;
 
         Object.values(rowValues).forEach((value) => {
-          const typedValue = value as {value: any; valueSourceIndex?: number};
+          const typedValue = value as { value: any; valueSourceIndex?: number };
 
           const valueFormatted = this.valueFormatterMatrix(
             typedValue.value,
-            //value.value,
             typedValue.valueSourceIndex === undefined
               ? valueSourcesIndexBackUp
               : typedValue.valueSourceIndex,
@@ -568,38 +567,27 @@ export class Matrix {
           index++;
         });
       }
-      
-      // If there are multiple values in a row
-      /* else if (row.hasOwnProperty('values') || row.children) */
-      else if (Object.prototype.hasOwnProperty.call(row, 'values') || row.children) {
-        // Deconstruct row into values
-        const rowValues = row.values as {[key: string]: any};
 
-        // Index iterator
+      // Case 2: Handle rows with multiple values or children
+      else if (Object.prototype.hasOwnProperty.call(row, 'values') || row.children) {
+        const rowValues = row.values as { [key: string]: any };
         let index = 0;
 
         // Insert row header
         rowObj[Object(columnDefs)[index]['field']] = row.value;
 
-        // Add the nodes to the nodesToExpand array so expand buttons can be programatically added
-        if (
-          Object.prototype.hasOwnProperty.call(row, 'isCollapsed') ||
-          Object.prototype.hasOwnProperty.call(row, 'identity')
-        ) {
+        // Handle row expansion
+        if (Object.prototype.hasOwnProperty.call(row, 'isCollapsed') || Object.prototype.hasOwnProperty.call(row, 'identity')) {
           this.nodesToExpand.push(row);
         }
 
-        // Increment index
         index++;
 
-        // Valuesource index back up (For calculation groups)
-        let valueSourcesIndexBackUp = 0;
-        // Try catch as sometimes it is values and sometimes it is children, but they never exist together in the dataView.
+        // Handle row values or children
         try {
-          // Loop through last level of children and insert into rowObj
           Object.values(rowValues).forEach((value) => {
-            const typedValue = value  as {value: any; valueSourceIndex?: number};
-            // Come back
+            const typedValue = value as { value: any; valueSourceIndex?: number };
+
             const valueFormatted = this.valueFormatterMatrix(
               typedValue.value,
               typedValue.valueSourceIndex === undefined
@@ -609,32 +597,19 @@ export class Matrix {
             );
 
             rowObj[Object(columnDefs)[index]['field']] = valueFormatted;
-
-            // Increment the index counter
             index++;
             valueSourcesIndexBackUp++;
           });
-
-          // If catch then it is children and we need to recursively loop through them
         } catch {
-          // If expand upwards is enabled, then pop it and insert it after loop
           let lastItem = null;
 
           if (this.formattingSettings.expansionCard.expandUp.value === true) {
             lastItem = this.nodesToExpand.pop();
           }
 
-          // Loop through children and insert into rowObj
           row.children.forEach((child) => {
             this.tempRowChildren.length = 0;
-            this.traverseChildNodes(
-              child,
-              columnDefs,
-              row.value,
-              identityHolder
-            );
-
-            // Increment the index counter
+            this.traverseChildNodes(child, columnDefs, row.value, identityHolder);
             index++;
           });
 
@@ -644,94 +619,53 @@ export class Matrix {
         }
       }
 
-      // Else if a singular value, it checks to check it has childIdentityFields otherwise it should not be inserting the value
+      // Case 3: Handle singular values with childIdentityFields
       else if (
-        /* matrix.columns.root.hasOwnProperty('childIdentityFields') ||
-        matrix.rows.root.hasOwnProperty('childIdentityFields') */
         Object.prototype.hasOwnProperty.call(matrix.columns.root, 'childIdentityFields') ||
         Object.prototype.hasOwnProperty.call(matrix.rows.root, 'childIdentityFields')
       ) {
-        // Insert the value so it is not undefined or null
         rowObj[Object(columnDefs)[0]['field']] = row.value;
       }
 
-      // Depending on the expansionUp check, we need to insert the rowObj in different ways
-      if (!this.expandUpwards && this.rowChildrenNodes.length > 0) {
-        // Clear out the rowData
-        rowData.length = 0;
-
-        // Create temporary holder array
-        const tempHolderNodes = [];
-
-        for (const node of this.rowChildrenNodes) {
-          tempHolderNodes.push(node);
-        }
-
-        // Put the last item in tempHolderNodes first
-        tempHolderNodes.unshift(tempHolderNodes.pop());
-
-        this.rowChildrenNodesSorted = [
-          ...this.rowChildrenNodesSorted,
-          ...tempHolderNodes,
-        ];
-
-        this.rowChildrenNodes = [];
-
-        for (const node of this.rowChildrenNodesSorted) {
-          rowData.push(node);
-        }
-      }
-
-      
-
-      // If multiple level rows, clear out the rowData before inserting it. AND EXPAND UP!
-      else if (this.rowChildrenNodes.length > 0) {
-        // Clearing out the arrray
-        rowData.length = 0;
-        // Looping through the rowChildrenNodes and pushing them to rowData
-        this.rowChildrenNodes.forEach((child) => {
-          rowData.push(child);
-        });
-      }
-
-      if (
-        rowData.length !== this.rowChildrenNodesSorted.length &&
-        this.rowChildrenNodesSorted.length > 0
-      ) {
-        rowData.pop();
-      }
-
-      // Push into rowData
+      // Push the processed row object to rowData
       rowData.push(rowObj);
     });
+  }
 
-    // console.log(rowData);
+  private static finalizeRowData(rowData, dynamicHeader, matrix) {
+    // Handle row data and expansion upwards
+    if (!this.expandUpwards && this.rowChildrenNodes.length > 0) {
+      rowData.length = 0;
+      const tempHolderNodes = [...this.rowChildrenNodes];
+      tempHolderNodes.unshift(tempHolderNodes.pop());
+      this.rowChildrenNodesSorted = [...this.rowChildrenNodesSorted, ...tempHolderNodes];
+      this.rowChildrenNodes = [];
 
-    // We fix the last row header of "Total" by getting the length of the array and changing the name on the last object. Other wise it will remain blank
+      this.rowChildrenNodesSorted.forEach((node) => rowData.push(node));
+    } else if (this.rowChildrenNodes.length > 0) {
+      rowData.length = 0;
+      this.rowChildrenNodes.forEach((child) => rowData.push(child));
+    }
+
+    if (rowData.length !== this.rowChildrenNodesSorted.length && this.rowChildrenNodesSorted.length > 0) {
+      rowData.pop();
+    }
+
+    // Handle the "Total" row logic
     const lengthOfRowData = rowData.length;
 
-    // Insert "Total" as last row header with a keyof typeof to ensure the string can access the object index. Checks first if undefined
-    if (
-      rowData[lengthOfRowData - 1][dynamicHeader as keyof typeof rowData] ===
-      undefined
-    ) {
-      // Ensure a "Total does not show up for measures only matrix"
+    if (rowData[lengthOfRowData - 1][dynamicHeader as keyof typeof rowData] === undefined) {
       if (
-        /* matrix.columns.root.hasOwnProperty('childIdentityFields') ||
-        matrix.rows.root.hasOwnProperty('childIdentityFields') */
         Object.prototype.hasOwnProperty.call(matrix.columns.root, 'childIdentityFields') ||
         Object.prototype.hasOwnProperty.call(matrix.rows.root, 'childIdentityFields')
       ) {
-        //  Insert Total in the first column last row
-        rowData[lengthOfRowData - 1][dynamicHeader as keyof typeof rowData] =
-          'Total';
+        rowData[lengthOfRowData - 1][dynamicHeader as keyof typeof rowData] = 'Total';
       }
     }
 
     // Update the object's rowData
     this.rowData = rowData;
   }
-
 
   private static finalizeGrid(columnDefs, rowData, dynamicHeader) {
     // let the grid know which columns and what data to use
@@ -812,30 +746,25 @@ export class Matrix {
 
     const columnDefs = [];
 
-    let colId = 0;
+    //let colId = 0;
+    const colId = 0;
 
     this.handleSingularMeasureMatrix(matrix, dataView, columnDefs, colId, dynamicHeader, gridCellStyling, categoryCellStyling, rowHeadersCard);
 
     this.defineColumns(matrix, dataView, columnDefs, colId, dynamicHeader, gridCellStyling, categoryCellStyling, rowHeadersCard);
 
     const rowData: object[] = [];
-    this.buildRowData(matrix, columnDefs, rowData, dynamicHeader);
+    this.processRowData(matrix, columnDefs, rowData);
+    this.finalizeRowData(rowData, dynamicHeader, matrix);
+    //this.buildRowData(matrix, columnDefs, rowData, dynamicHeader);
 
     //const total = rowData.pop();
     return this.finalizeGrid(columnDefs, rowData, dynamicHeader);
   }
-  
-  /**
-   * Recursive function to traverse child nodes
-   */
-  private static async traverseChildNodes(
-    child,
-    columnDefs,
-    parentHeader,
-    identityHolder
-  ) {
+
+  private static processChildRow(child, columnDefs, parentHeader, identityHolder) {
     // Identity holder in a separate array to avoid reference duplication
-    identityHolder = [...identityHolder];
+    const newIdentityHolder = [...identityHolder];
 
     // Create the rowObj
     const rowObj = {};
@@ -847,19 +776,14 @@ export class Matrix {
     let index = 0;
 
     // Check if child.value (aka the header) is undefined, if so grab the parentHeader
-    let rowHeader = child.value;
-
-    if (child.value === undefined) {
-      rowHeader = parentHeader;
-    }
+    //let rowHeader = child.value !== undefined ? child.value : parentHeader;
+    const rowHeader = child.value !== undefined ? child.value : parentHeader;
 
     // Insert row header
     rowObj[Object(columnDefs)[index]['field']] = String(rowHeader);
 
-    // Add the nodes to the nodesToExpand array so expand buttons can be programatically added & for expansion identification
+    // Add the nodes to the nodesToExpand array so expand buttons can be programmatically added & for expansion identification
     if (
-      /* child.hasOwnProperty('isCollapsed') ||
-      child.hasOwnProperty('identity') */
       Object.prototype.hasOwnProperty.call(child, 'isCollapsed') ||
       Object.prototype.hasOwnProperty.call(child, 'identity')
     ) {
@@ -868,11 +792,11 @@ export class Matrix {
 
     // If identity holder is not subTotal, push it
     if (child.isSubtotal !== true) {
-      identityHolder.push(child);
+      newIdentityHolder.push(child);
     }
 
     // Push the identity holder into the rowObj
-    rowObj['identity'] = identityHolder;
+    rowObj['identity'] = newIdentityHolder;
 
     // Increment index
     index++;
@@ -880,10 +804,6 @@ export class Matrix {
     // Valuesource index back up (For calculation groups)
     let valueSourcesIndexBackUp = 0;
 
-    // Create a temporary holding array for sorting
-    const tempRowChildren = [...this.tempRowChildren];
-
-    // Try catch as sometimes it is values and sometimes it is children, but they never exist together in the dataView.
     try {
       // Loop through last level of children and insert into rowObj
       Object.values(rowValues).forEach((value) => {
@@ -901,79 +821,75 @@ export class Matrix {
         index++;
         valueSourcesIndexBackUp++;
       });
+    } catch {
+      // If there's an error, it means children need to be processed recursively
+      rowObj['hasChildren'] = true;
+    }
 
-      // If expand upwards splice and merge the arrays otherwise just insert
+    return { rowObj, rowHeader, newIdentityHolder };
+  }
+
+  private static async traverseAndExpandChildren(child, columnDefs, rowHeader, identityHolder) {
+    const { rowObj, newIdentityHolder } = this.processChildRow(child, columnDefs, rowHeader, identityHolder);
+
+    if (!rowObj['hasChildren']) {
       if (this.expandUpwards === false) {
-        // Push into both arrays
+        // Manage tempRowChildren and rowChildrenNodes for expansion downwards
         this.tempRowChildren.push(rowObj);
         this.rowChildrenNodes.push(rowObj);
 
-        // Push into the local array
-        tempRowChildren.push(rowObj);
+        const tempRowChildren = [...this.tempRowChildren];
+        const lastItem = tempRowChildren.pop();
+        tempRowChildren.unshift(lastItem);
 
-        // Get the last item of the tempRowChildren array
-        const LastITem = tempRowChildren.pop();
-
-        // Insert it first
-        tempRowChildren.unshift(LastITem);
-
-        // Splice the list to avoid duplicates and then merge
         const lengthOfRowChildrenNodes = this.rowChildrenNodes.length;
         const lengthOfTempNodes = tempRowChildren.length;
         const difference = lengthOfRowChildrenNodes - lengthOfTempNodes;
 
         this.rowChildrenNodes.splice(difference, lengthOfTempNodes);
-
         this.rowChildrenNodes = [...this.rowChildrenNodes, ...tempRowChildren];
       } else {
         this.rowChildrenNodes.push(rowObj);
       }
-
-      // If catch then it is children and we need to recursively loop through them
-    } catch {
-      // Contains the children in case expanse upward is false
+    } else {
+      // Recursive case: process children and handle upward expansion
       const tempRowChildrenContained = [...this.tempRowChildren];
 
-      // If expand upwards is false, reset the tempRowChildren array
       if (this.expandUpwards === false) {
         this.tempRowChildren.length = 0;
       }
 
       let lastItem = null;
-      // If the expandUp is true, pop the last item in the array
-
       if (this.formattingSettings.expansionCard.expandUp.value === true) {
         lastItem = this.nodesToExpand.pop();
       }
 
-      // Loop through children and insert into rowObj
-      child.children.forEach((child) => {
-        this.traverseChildNodes(child, columnDefs, rowHeader, identityHolder);
-
-        index++;
+      child.children.forEach((subChild) => {
+        this.traverseAndExpandChildren(subChild, columnDefs, rowHeader, newIdentityHolder);
       });
 
-      // Insert it after every other item
       if (lastItem !== null) {
         this.nodesToExpand.push(lastItem);
       }
 
-      // If expand upwards, unshift and merge the temprow children and temprowChildrenContained arrays
       if (this.expandUpwards === false) {
-        // tempRowChildrenContained.unshift(tempRowChildrenContained.pop());
-
+        tempRowChildrenContained.reverse();
         this.tempRowChildren.unshift(this.tempRowChildren.pop());
-
-        // tempRowChildrenContained.unshift(this.tempRowChildren.pop());
-
-        tempRowChildren.reverse();
-
         this.tempRowChildren = [
           ...tempRowChildrenContained,
           ...this.tempRowChildren,
         ];
       }
     }
+  }
+
+  /**
+ * Recursive function to traverse child nodes
+ */
+  private static async traverseChildNodes(child, columnDefs, parentHeader, identityHolder) {
+    const { rowObj, rowHeader, newIdentityHolder } = this.processChildRow(child, columnDefs, parentHeader, identityHolder);
+
+    this.traverseAndExpandChildren(child, columnDefs, rowHeader, newIdentityHolder);
   }
 
   /**
@@ -1419,175 +1335,116 @@ export class Matrix {
     this.selectionManager.toggleExpandCollapse(selectionID);
   }
 
+  
   /**
-   * This functions formats the expanded rows.
+   * Checks if expansion requirements are met before formatting rows.
    */
-  private static formatExpandedRows() {
-    // console.log(this.formattingSettings);
-
-    // IF checks to make sure function is not running needlessly
+  private static checkExpansionRequirements(): boolean {
     if (
-      /* !this.dataView.matrix.columns.root.hasOwnProperty(
-        'childIdentityFields'
-      ) &&
-      !this.dataView.matrix.rows.root.hasOwnProperty('childIdentityFields')
-     */
-    !Object.prototype.hasOwnProperty.call(this.dataView.matrix.columns.root, 'childIdentityFields') &&
-    !Object.prototype.hasOwnProperty.call(this.dataView.matrix.rows.root, 'childIdentityFields')
-      ) {
-      return;
+      !Object.prototype.hasOwnProperty.call(this.dataView.matrix.columns.root, 'childIdentityFields') &&
+      !Object.prototype.hasOwnProperty.call(this.dataView.matrix.rows.root, 'childIdentityFields')
+    ) {
+      return false;
     }
 
     try {
-      // If the row level length is 1, return as we do not want to format rows that cannot be expanded/Have buttons
       if (
-        /* !this.dataView.matrix.rows.levels[0].hasOwnProperty('canBeExpanded') */
         !Object.prototype.hasOwnProperty.call(this.dataView.matrix.rows.levels[0], 'canBeExpanded')
       ) {
-        return;
+        return false;
       }
     } catch {
-      return;
+      return false;
     }
 
-    // Get the expansionCard
-    const expansionCard = this.formattingSettings.expansionCard;
+    return true;
+  }
 
-    // Get all the rows
+  /**
+ * Applies formatting to each expanded row based on expansion settings.
+ */
+  private static applyRowFormatting() {
+    const expansionCard = this.formattingSettings.expansionCard;
     const rows = document.querySelectorAll('.ag-row');
 
-    // Loop through them
     for (const rowHeader of Object(rows)) {
-      // If singular measure, do not run this function as there is no expansion
-
-      // Get the row-id from the HTML attribute
       const rowId = rowHeader.getAttribute('row-id');
-
-      // Get the corresponding node from the nodesToExpand Array
       const rowNodeData = this.nodesToExpand[rowId];
-
-      // The rowHeaderTextContent to skip "Total" to avoid an error but also indent it
       const rowHeaderTextcontent = rowHeader.children[0].textContent;
-
-      // The rowHeaderDIV for CSS transformation
       const rowHeaderDIV = rowHeader.children[0];
 
-      // INDENTATION
-      // Get the value from the formatting settings
-      let indentation =
-        this.formattingSettings.expansionCard.indentationValue.value;
+      let indentation = expansionCard.indentationValue.value;
 
-      // Try catch in case of unforseen errors (Should not be any but for good measure) Also indent it to the same as first level nodes
       try {
         if (rowHeaderTextcontent === 'Total') {
-          // Check if indentation is enabled
-          if (
-            this.formattingSettings.expansionCard.enableIndentation.value ===
-            true
-          ) {
-            // Check if buttons are enabled
-            if (
-              this.formattingSettings.expansionCard.enableButtons.value === true
-            ) {
-              rowHeaderDIV.style.textIndent = `${indentation}px`;
-              rowHeaderDIV.style.textAlign = 'start';
-            }
-
-            continue;
+          if (expansionCard.enableIndentation.value && expansionCard.enableButtons.value) {
+            rowHeaderDIV.style.textIndent = `${indentation}px`;
+            rowHeaderDIV.style.textAlign = 'start';
           }
+          continue;
         }
 
-        // Ensure node level is 1 for multiplication
         let nodeLevel = rowNodeData.level === 0 ? 1 : rowNodeData.level + 1;
-
-        // If buttons are disabled, remove one level
-        if (
-          this.formattingSettings.expansionCard.enableButtons.value === false
-        ) {
-          nodeLevel = nodeLevel - 1;
-        }
+        if (!expansionCard.enableButtons.value) nodeLevel -= 1;
 
         indentation = parseInt(nodeLevel) * indentation;
 
-        // Check if indentation is enabled
-        if (
-          this.formattingSettings.expansionCard.enableIndentation.value === true
-        ) {
-          // Put in the indentation
+        if (expansionCard.enableIndentation.value) {
           rowHeaderDIV.style.textIndent = `${indentation}px`;
         }
 
-        // Bold rows that have been expanded and change the button text to "-"
-        if (rowNodeData.isCollapsed === false) {
-          // Set the background color via image left right gradient
-
-          // To be refered to later in the expandedRows function
+        if (!rowNodeData.isCollapsed) {
           rowHeader.classList.add('expandedRow');
 
-          // Set alignment
           for (const child of rowHeader.children) {
-            // Set the bold
-            child.style.fontWeight = expansionCard.enableBold.value
-              ? 'bold'
-              : 'normal';
-
-            // Set the italic
-            child.style.fontStyle = expansionCard.enableItalic.value
-              ? 'italic'
-              : 'normal';
-
-            // child.style.backgroundColor = 'red';
+            child.style.fontWeight = expansionCard.enableBold.value ? 'bold' : 'normal';
+            child.style.fontStyle = expansionCard.enableItalic.value ? 'italic' : 'normal';
             child.style.justifyContent = expansionCard.alignment.value.value;
-
-            // Set the fontFamily
             child.style.fontFamily = expansionCard.fontFamily.value;
-
-            // set the fontSize
             child.style.fontSize = `${expansionCard.fontSize.value}px`;
-
-            // Set the fontColor
             child.style.color = expansionCard.fontColor.value.value;
           }
 
-          // Get the value from the formatting settings
           const borderWidth = expansionCard.borderWidth.value;
-
-          // Get the border color from the formatting settings
           const borderColor = hex2rgba(
             expansionCard.borderColor.value.value,
             expansionCard.borderOpacity.value
           );
-
-          // Get the border style from the formatting settings
           const borderStyle = expansionCard.borderStyle.value.value;
 
-          // Set the style TOP
           rowHeader.style.borderTop = expansionCard.enableTopBorder.value
             ? `${borderWidth}px ${borderStyle} ${borderColor}`
             : 'none';
-
-          // Set the style BOTTOM
           rowHeader.style.borderBottom = expansionCard.enableBottomBorder.value
             ? `${borderWidth}px ${borderStyle} ${borderColor}`
             : 'none';
 
-          this.gridOptions.api
-            .getRowNode(rowId)
-            .setRowHeight(expansionCard.height.value);
-
-          // Rowheader style via background image
+          this.gridOptions.api.getRowNode(rowId).setRowHeight(expansionCard.height.value);
           rowHeader.style.backgroundImage = `linear-gradient(to right, ${hex2rgba(
             expansionCard.backgroundColor.value.value,
             expansionCard.opacity.value
           )} 100%, white 100%)`;
 
-          // Change the button text to "-"
           const button = rowHeaderDIV.querySelector('.expandButton');
-          button.textContent = '-';
+          if (button) button.textContent = '-';
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error applying row formatting:', e);
+      }
     }
   }
+
+  /**
+ * This function formats the expanded rows.
+ */
+  private static formatExpandedRows() {
+    // Run initial checks to prevent unnecessary formatting
+    if (!this.checkExpansionRequirements()) return;
+
+    // Apply row formatting
+    this.applyRowFormatting();
+  }
+
 
   /**
    * Format the rows to get a filled background color. The function was reduced from a more complex function as the rest was integrated into the grid
@@ -1895,542 +1752,343 @@ export class Matrix {
       }
     }
   }
-  /**
-   * Format specific rows
-   */
-  private static formatSpecificRows() {
-    // Get all the categoryCells
-    const categoryCells = document.querySelectorAll('.categoryCell');
 
-    // If categoryCells is null, return
-    if (categoryCells === null) {
-      return;
+  /**
+ * Extracts formatting settings from the expansion card.
+ */
+  private static extractFormattingSettings(card) {
+    return {
+      applicableRows: card.savedName.value.split(','),
+      rowHeaderFontFamily: card.rowHeaderFontFamily.value,
+      height: card.height.value,
+      rowHeaderFontColor: card.rowHeaderFontColor.value.value,
+      rowHeaderFontSize: card.rowHeaderFontSize.value,
+      rowHeaderBold: card.rowHeaderBold.value,
+      rowHeaderItalic: card.rowHeaderItalic.value,
+      rowHeaderAlignment: card.rowHeaderAlignment.value.value,
+      rowHeaderBackground: card.rowHeaderBackground.value.value,
+      font: card.fontFamily.value,
+      fontSize: card.fontSize.value,
+      fontColor: card.fontColor.value.value,
+      bold: card.enableBold.value,
+      italic: card.enableItalic.value,
+      backgroundColor: card.backgroundColor.value.value,
+      borderWidth: card.borderWidth.value,
+      borderColor: hex2rgba(card.borderColor.value.value, card.borderOpacity.value),
+      borderStyle: card.borderStyle.value.value,
+      topBorder: card.enableTopBorder.value,
+      bottomBorder: card.enableBottomBorder.value,
+      alignment: card.alignment.value.value,
+      rowHeaderIndentation: card.rowHeaderIndentation.value,
+      indentation: card.indentation.value,
+      headerOpacity: card.headerOpacity.value,
+      opacity: card.opacity.value,
+    };
+  }
+
+  /**
+ * Applies formatting to a specific row.
+ */
+  private static applyFormattingToRow(row, rowHeader, rowSettings, rowHeaderWidth) {
+    // Set row height if applicable
+    const rowId = row.getAttribute('row-id');
+    const rowNode = this.gridOptions.api.getRowNode(rowId);
+    if (rowNode) rowNode.setRowHeight(rowSettings.height);
+
+    // Set top and bottom border
+    row.style.borderTop = rowSettings.topBorder
+      ? `${rowSettings.borderWidth}px ${rowSettings.borderStyle} ${rowSettings.borderColor}`
+      : 'none';
+
+    row.style.borderBottom = rowSettings.bottomBorder
+      ? `${rowSettings.borderWidth}px ${rowSettings.borderStyle} ${rowSettings.borderColor}`
+      : 'none';
+
+    // Apply child-specific styles
+    for (const child of row.children) {
+      child.style.justifyContent = rowSettings.alignment;
+      child.style.fontFamily = rowSettings.font;
+      child.style.fontSize = `${rowSettings.fontSize}px`;
+      child.style.color = rowSettings.fontColor;
+      child.style.fontWeight = rowSettings.bold ? 'bold' : 'normal';
+      child.style.fontStyle = rowSettings.italic ? 'italic' : 'normal';
+      child.style.textIndent = `${rowSettings.indentation}px`;
+      child.style.backgroundColor = 'RGBA(0,0,0,0)';
     }
 
-    // Loop through the formatting settings cards array
+    // Set background gradient
+    row.style.backgroundImage = `linear-gradient(to right, ${hex2rgba(
+      rowSettings.rowHeaderBackground,
+      rowSettings.headerOpacity
+    )} ${rowHeaderWidth}px, ${hex2rgba(
+      rowSettings.backgroundColor,
+      rowSettings.opacity
+    )} ${rowHeaderWidth}px)`;
+
+    // Apply row header-specific styles
+    rowHeader.style.fontFamily = rowSettings.rowHeaderFontFamily;
+    rowHeader.style.fontSize = `${rowSettings.rowHeaderFontSize}px`;
+    rowHeader.style.color = rowSettings.rowHeaderFontColor;
+    rowHeader.style.justifyContent = rowSettings.rowHeaderAlignment;
+    rowHeader.style.fontWeight = rowSettings.rowHeaderBold ? 'bold' : 'normal';
+    rowHeader.style.fontStyle = rowSettings.rowHeaderItalic ? 'italic' : 'normal';
+    rowHeader.style.textIndent = `${rowSettings.rowHeaderIndentation}px`;
+  }
+
+  /**
+ * Format specific rows.
+ */
+  private static formatSpecificRows() {
+    const categoryCells = document.querySelectorAll('.categoryCell');
+    if (!categoryCells) return;
+
     for (const card of this.formattingSettings.cards) {
-      // Check if the card contains the string "specificRow" via the name attribute
-      const name = card.name;
-
-      if (!name.includes('specificRow')) {
+      if (!card.name.includes('specificRow') || !card.enableCard.value || !card.savedName.value) {
         continue;
       }
 
-      // Check if the enableCard is enabled
-      if (card.enableCard.value === false) {
-        continue;
-      }
+      const rowSettings = this.extractFormattingSettings(card);
 
-      if (card.savedName.value === '') {
-        continue;
-      }
-
-      // Get the applicable rows
-      const applicableRows = card.savedName.value.split(',');
-
-      // Get the rowHeaderFontFamily
-      const rowHeaderFontFamily = card.rowHeaderFontFamily.value;
-
-      // Get the height
-      const height = card.height.value;
-
-      // Get the RowHeaderFontColor
-      const rowHeaderFontColor = card.rowHeaderFontColor.value.value;
-
-      // Get the RowHeaderFontSize
-      const rowHeaderFontSize = card.rowHeaderFontSize.value;
-
-      // Get the RowHeaderBold
-      const rowHeaderBold = card.rowHeaderBold.value;
-
-      // Get the RowHeaderItalic
-      const rowHeaderItalic = card.rowHeaderItalic.value;
-
-      // Get the RowHeaderAlignment
-      const rowHeaderAlignment = card.rowHeaderAlignment.value.value;
-
-      // Get the RowHeaderBackground
-      const rowHeaderBackground = card.rowHeaderBackground.value.value;
-
-      // Get the row font
-      const font = card.fontFamily.value;
-
-      // Get the row font size
-      const fontSize = card.fontSize.value;
-
-      // Get the row font color
-      const fontColor = card.fontColor.value.value;
-
-      // Get the bold value
-      const bold = card.enableBold.value;
-
-      // Get the italic value
-      const italic = card.enableItalic.value;
-
-      // Get the background color
-      const backgroundColor = card.backgroundColor.value.value;
-
-      // Get the border width
-      const borderWidth = card.borderWidth.value;
-
-      // Get the border color
-      const borderColor = hex2rgba(
-        card.borderColor.value.value,
-        card.borderOpacity.value
-      );
-
-      // Get the border style
-      const borderStyle = card.borderStyle.value.value;
-
-      // Get the Top border enabled
-      const topBorder = card.enableTopBorder.value;
-
-      // Get alignment
-      const alignment = card.alignment.value.value;
-
-      // Get the Bottom border enabled
-      const bottomBorder = card.enableBottomBorder.value;
-
-      // Loop through the applicale rows
-      for (const displayName of applicableRows) {
-        // A check to ensure the Total row is not formatted
+      for (const displayName of rowSettings.applicableRows) {
         if (
           displayName === 'Total' ||
           displayName === this.formattingSettings.totalCard.savedName.value
         ) {
           continue;
         }
-        // Loop through the category cells to find the correct row
-        for (const rowHeader of Object(categoryCells)) {
-          // Remove "+" or "-" from the row textContent
-          const rowTextContent = rowHeader.textContent
-            .replace('+', '')
-            .replace('-', '');
 
-          // Skip if they do not match
-          if (
-            rowTextContent !== displayName.replace('+', '').replace('-', '')
-          ) {
+        for (const rowHeader of Object(categoryCells)) {
+          const rowTextContent = rowHeader.textContent.replace('+', '').replace('-', '');
+
+          if (rowTextContent !== displayName.replace('+', '').replace('-', '')) {
             continue;
           }
 
-          // Get the parent element to style the row
           const row = rowHeader.parentElement;
-
-          // Get the row-id via query selector
-          const rowId = row.getAttribute('row-id');
-
-          // Get the row node
-          const rowNode = this.gridOptions.api.getRowNode(rowId);
-
-          // Ensure rowNode is not undefined otherwise the application fails
-          if (rowNode != undefined) {
-            // Set the row height via the grid API
-            rowNode.setRowHeight(height);
-          }
-
-          // Set the top border
-          row.style.borderTop = topBorder
-            ? `${borderWidth}px ${borderStyle} ${borderColor}`
-            : 'none';
-
-          // Set the bottom border
-          row.style.borderBottom = bottomBorder
-            ? `${borderWidth}px ${borderStyle} ${borderColor}`
-            : 'none';
-
-          // Set child specific values
-          for (const child of row.children) {
-            child.style.justifyContent = alignment;
-
-            // Set the row font
-            child.style.fontFamily = font;
-
-            // Set the row font size
-            child.style.fontSize = `${fontSize}px`;
-
-            // Set the row font color
-            child.style.color = fontColor;
-
-            // Set the bold
-            child.style.fontWeight = bold ? 'bold' : 'normal';
-
-            // Set the italic
-            child.style.fontStyle = italic ? 'italic' : 'normal';
-
-            // Set the indentation
-            child.style.textIndent = `${card.indentation.value}px`;
-
-            // This is set to remove the specific column background
-            child.style.backgroundColor = 'RGBA(0,0,0,0)';
-          }
-
-          row.style.marginBottom = '5px';
-
-          // Get the rowheader width for the linear gradient
           const rowHeaderWidth = rowHeader.offsetWidth;
 
-          // Create a linear gradient where the color includes the headerColor and the row color where it cuts off at the header width
-          row.style.backgroundImage = `linear-gradient(to right, ${hex2rgba(
-            rowHeaderBackground,
-            card.headerOpacity.value
-          )} ${rowHeaderWidth}px, ${hex2rgba(
-            backgroundColor,
-            card.opacity.value
-          )} ${rowHeaderWidth}px)`;
-
-          // Set the rowHeader values to the rowHeader
-          rowHeader.style.fontFamily = rowHeaderFontFamily;
-          rowHeader.style.fontSize = `${rowHeaderFontSize}px`;
-          rowHeader.style.color = rowHeaderFontColor;
-          rowHeader.style.justifyContent = rowHeaderAlignment;
-          rowHeader.style.fontWeight = rowHeaderBold ? 'bold' : 'normal';
-          rowHeader.style.fontStyle = rowHeaderItalic ? 'italic' : 'normal';
-          rowHeader.style.textIndent = `${card.rowHeaderIndentation.value}px`;
+          this.applyFormattingToRow(row, rowHeader, rowSettings, rowHeaderWidth);
         }
       }
     }
   }
 
   /**
-   * Format specific columns
+   * Extracts formatting settings for a specific column from a card.
+   */
+  private static extractColumnFormattingSettings(card) {
+    return {
+      applicableColumns: card.savedName.value.split(','),
+      alignment: card.columnAlignment.value.value,
+      backgroundColor: hex2rgba(card.columnBackgroundColor.value.value, card.valuesOpacity.value),
+      bold: card.columnBold.value,
+      italic: card.columnItalic.value,
+      fontColor: card.columnFontColor.value.value,
+      font: card.columnFontFamily.value,
+      fontSize: card.columnFontSize.value,
+      columnHeaderAlignment: card.columnHeaderAlignment.value.value,
+      columnHeaderBackgroundColor: hex2rgba(card.columnHeaderBackgroundColor.value.value, card.opacity.value),
+      columnHeaderBold: card.columnHeaderBold.value,
+      columnHeaderFontColor: card.columnHeaderFontColor.value.value,
+      columnHeaderFontFamily: card.columnHeaderFontFamily.value,
+      columnHeaderFontSize: card.columnHeaderFontSize.value,
+      columnHeaderItalic: card.columnHeaderItalic.value,
+      columnWidth: card.columnWidth.value,
+      enableLeftBorder: card.enableLeftBorder.value,
+      enableRightBorder: card.enableRightBorder.value,
+      borderColor: hex2rgba(card.borderColor.value.value, card.borderOpacity.value),
+      borderStyle: card.borderStyle.value.value,
+      borderWidth: card.borderWidth.value,
+    };
+  }
+
+  /**
+   * Applies formatting to a specific column and its header.
+   */
+  private static applyFormattingToColumn(header, colId, columnSettings) {
+    //const columnChildren = document.querySelectorAll(`[col-id="${colId}"]`);
+    const columnChildren = Object(document.querySelectorAll(`[col-id="${colId}"]`));
+
+    // Apply styles to each cell in the column
+    for (const child of columnChildren) {
+      child.style.justifyContent = columnSettings.alignment;
+      child.style.backgroundColor = columnSettings.backgroundColor;
+      child.style.fontFamily = columnSettings.font;
+      child.style.fontSize = `${columnSettings.fontSize}px`;
+      child.style.color = columnSettings.fontColor;
+      child.style.fontWeight = columnSettings.bold ? 'bold' : 'normal';
+      child.style.fontStyle = columnSettings.italic ? 'italic' : 'normal';
+      child.style.borderLeft = columnSettings.enableLeftBorder
+        ? `${columnSettings.borderWidth}px ${columnSettings.borderStyle} ${columnSettings.borderColor}`
+        : 'none';
+      child.style.borderRight = columnSettings.enableRightBorder
+        ? `${columnSettings.borderWidth}px ${columnSettings.borderStyle} ${columnSettings.borderColor}`
+        : 'none';
+      child.style.borderTop = 'none';
+      child.style.borderBottom = 'none';
+    }
+
+    // Apply styles to the header
+    header.style.fontFamily = columnSettings.columnHeaderFontFamily;
+    header.style.fontStyle = columnSettings.columnHeaderItalic ? 'italic' : 'normal';
+    header.style.fontWeight = columnSettings.columnHeaderBold ? 'bold' : 'normal';
+    header.style.fontSize = `${columnSettings.columnHeaderFontSize}px`;
+    header.style.color = columnSettings.columnHeaderFontColor;
+
+    const headerParent = header.parentElement.parentElement.parentElement.parentElement;
+    headerParent.style.backgroundColor = columnSettings.columnHeaderBackgroundColor;
+    headerParent.style.display = 'flex';
+    header.style.justifyContent = columnSettings.columnHeaderAlignment;
+
+    // Apply the column width via gridOptions
+    this.gridOptions.columnApi.setColumnWidths([{ key: colId, newWidth: columnSettings.columnWidth }]);
+  }
+
+  /**
+   * Formats specific columns based on settings.
    */
   private static formatSpecificColumns() {
-    const headerCells = Object(
-      document.querySelectorAll('.ag-header-cell-text')
-    );
+    //const headerCells = document.querySelectorAll('.ag-header-cell-text');
+    const headerCells = Object(document.querySelectorAll('.ag-header-cell-text'));
 
-    // Loop through the formatting settings cards array
+
     for (const card of this.formattingSettings.cards) {
-      // Check if the card contains the string "specificRow" via the name attribute
-      const name = card.name;
-
-      if (!name.includes('specificColumn')) {
+      if (!card.name.includes('specificColumn') || !card.enableCard.value) {
         continue;
       }
 
-      // Check if the enableCard is enabled
-      if (card.enableCard.value === false) {
-        continue;
-      }
+      const columnSettings = this.extractColumnFormattingSettings(card);
 
-      // Get the columnAlignment from the card
-      const alignment = card.columnAlignment.value.value;
-
-      // Get the columncBackgroundColor
-      const backgroundColor = hex2rgba(
-        card.columnBackgroundColor.value.value,
-        card.valuesOpacity.value
-      );
-
-      // Get the columnBold
-      const bold = card.columnBold.value;
-
-      // Get the columnItalic
-      const italic = card.columnItalic.value;
-
-      // Get the columnFontColor
-      const fontColor = card.columnFontColor.value.value;
-
-      // Get the columnFontFamily
-      const font = card.columnFontFamily.value;
-
-      // Get the columnFontSize
-      const fontSize = card.columnFontSize.value;
-
-      // Get the columnHeaderAlignment
-      const columnHeaderAlignment = card.columnHeaderAlignment.value.value;
-
-      // Get the columnHeaderBackgroundColor
-      const columnHeaderBackgroundColor = hex2rgba(
-        card.columnHeaderBackgroundColor.value.value,
-        card.opacity.value
-      );
-
-      // Get the columnHeaderBold
-      const columnHeaderBold = card.columnHeaderBold.value;
-
-      // Get the columnHeaderFontColor
-      const columnHeaderFontColor = card.columnHeaderFontColor.value.value;
-
-      // Get the columnHeaderFontFamily
-      const columnHeaderFontFamily = card.columnHeaderFontFamily.value;
-
-      // Get the columnHeaderFontSize
-      const columnHeaderFontSize = card.columnHeaderFontSize.value;
-
-      // Get the columnHeaderItalic
-      const columnHeaderItalic = card.columnHeaderItalic.value;
-
-      // APPLIES TO HEADER AND REST OF COLUMN
-      // Get the columnWidth
-      const columnWidth = card.columnWidth.value;
-
-      // Get the enableLeftBorder
-      const enableLeftBorder = card.enableLeftBorder.value;
-
-      // Get the enableRightBorder
-      const enableRightBorder = card.enableRightBorder.value;
-
-      // Get the borderColor
-      const borderColor = hex2rgba(
-        card.borderColor.value.value,
-        card.borderOpacity.value
-      );
-
-      // Get the borderStyle
-      const borderStyle = card.borderStyle.value.value;
-
-      // Get the borderWidth
-      const borderWidth = card.borderWidth.value;
-
-      // Applicable columns via the card savedName
-      const applicableColumns = card.savedName.value.split(',');
-
-      for (const displayName of applicableColumns) {
-        // Loop through the header cells to find the correct row
+      for (const displayName of columnSettings.applicableColumns) {
         for (const header of headerCells) {
-          // Skip if they do not match
           if (header.textContent !== displayName) {
             continue;
           }
 
-          // Get the parent of the parent of parent of parent of the header to style the column
-          // This is due to line breaks being added from the top parent that could not get removed
-          const headerParent =
-            header.parentElement.parentElement.parentElement.parentElement;
-
-          // Get the col-id attribute value form the headerParent
+          const headerParent = header.parentElement.parentElement.parentElement.parentElement;
           const colId = headerParent.getAttribute('col-id');
 
-          // Get the column via col-id from querySelectorAll
-          const columnChildren = Object(
-            document.querySelectorAll(`[col-id="${colId}"]`)
-          );
-
-          for (const child of columnChildren) {
-            // // Apply styles to children
-            child.style.justifyContent = alignment;
-            child.style.backgroundColor = backgroundColor;
-            child.style.fontFamily = font;
-            child.style.fontSize = `${fontSize}px`;
-            child.style.color = fontColor;
-            child.style.fontWeight = bold ? 'bold' : 'normal';
-            child.style.fontStyle = italic ? 'italic' : 'normal';
-            child.style.borderLeft = enableLeftBorder
-              ? `${borderWidth}px ${borderStyle} ${borderColor}`
-              : 'none';
-
-            child.style.borderRight = enableRightBorder
-              ? `${borderWidth}px ${borderStyle} ${borderColor}`
-              : 'none';
-
-            child.style.borderBottom = 'none';
-            child.style.borderTop = 'none';
-          }
-
-          // Apply to the headerParent and the header from the header variables
-          // Set the column font
-          header.style.fontFamily = columnHeaderFontFamily;
-          header.style.fontStyle = columnHeaderItalic ? 'italic' : 'normal';
-          header.style.fontWeight = columnHeaderBold ? 'bold' : 'normal';
-          header.style.fontSize = `${columnHeaderFontSize}px`;
-          header.style.color = columnHeaderFontColor;
-          headerParent.style.backgroundColor = columnHeaderBackgroundColor;
-          headerParent.style.display = 'flex';
-          header.style.justifyContent = columnHeaderAlignment;
-
-          // Apply the column width
-          this.gridOptions.columnApi.setColumnWidths([
-            { key: colId, newWidth: columnWidth },
-          ]);
+          this.applyFormattingToColumn(header, colId, columnSettings);
         }
       }
     }
   }
 
+
   /**
-   * Format the Total Row
+   * Extracts formatting settings for the Total row from the card.
+   */
+  private static extractTotalRowSettings(card) {
+    return {
+      totalTextContent: card.savedName?.value || 'Total',
+      rowHeaderFontFamily: card.rowHeaderFontFamily.value,
+      height: card.height.value,
+      rowHeaderFontColor: card.rowHeaderFontColor.value.value,
+      rowHeaderFontSize: card.rowHeaderFontSize.value,
+      rowHeaderBold: card.rowHeaderBold.value,
+      rowHeaderItalic: card.rowHeaderItalic.value,
+      rowHeaderAlignment: card.rowHeaderAlignment.value.value,
+      rowHeaderBackground: card.rowHeaderBackground.value.value,
+      font: card.fontFamily.value,
+      fontSize: card.fontSize.value,
+      fontColor: card.fontColor.value.value,
+      bold: card.enableBold.value,
+      italic: card.enableItalic.value,
+      backgroundColor: card.backgroundColor.value.value,
+      borderWidth: card.borderWidth.value,
+      borderColor: hex2rgba(card.borderColor.value.value, card.borderOpacity.value),
+      borderStyle: card.borderStyle.value.value,
+      topBorder: card.enableTopBorder.value,
+      bottomBorder: card.enableBottomBorder.value,
+      alignment: card.alignment.value.value,
+      rowHeaderIndentation: card.rowHeaderIndentation.value,
+      headerOpacity: card.headerOpacity.value,
+      opacity: card.opacity.value,
+      indentation: card.indentation.value,
+    };
+  }
+
+  /**
+ * Applies formatting to the Total row.
+ */
+  private static applyFormattingToTotalRow(totalRow, rowHeader, rowSettings) {
+    const rowHeaderWidth = rowHeader.offsetWidth;
+
+    // Apply background gradient to the total row
+    totalRow.style.backgroundImage = `linear-gradient(to right, ${hex2rgba(
+      rowSettings.rowHeaderBackground,
+      rowSettings.headerOpacity
+    )} ${rowHeaderWidth}px, ${hex2rgba(
+      rowSettings.backgroundColor,
+      rowSettings.opacity
+    )} ${rowHeaderWidth}px)`;
+
+    // Apply custom label
+    if (rowHeader.textContent.includes('Invalid')) rowHeader.textContent = 'Total';
+    rowHeader.textContent = rowHeader.textContent === 'Total'
+      ? rowSettings.totalTextContent
+      : rowHeader.textContent;
+
+    // Apply rowHeader-specific styles
+    rowHeader.style.fontFamily = rowSettings.rowHeaderFontFamily;
+    rowHeader.style.fontSize = `${rowSettings.rowHeaderFontSize}px`;
+    rowHeader.style.color = rowSettings.rowHeaderFontColor;
+    rowHeader.style.justifyContent = rowSettings.rowHeaderAlignment;
+    rowHeader.style.fontWeight = rowSettings.rowHeaderBold ? 'bold' : 'normal';
+    rowHeader.style.fontStyle = rowSettings.rowHeaderItalic ? 'italic' : 'normal';
+    rowHeader.style.textIndent = `${rowSettings.rowHeaderIndentation}px`;
+    rowHeader.style.border = 'none';
+
+    // Set the top and bottom border
+    totalRow.style.borderTop = rowSettings.topBorder
+      ? `${rowSettings.borderWidth}px ${rowSettings.borderStyle} ${rowSettings.borderColor}`
+      : 'none';
+    totalRow.style.borderBottom = rowSettings.bottomBorder
+      ? `${rowSettings.borderWidth}px ${rowSettings.borderStyle} ${rowSettings.borderColor}`
+      : 'none';
+
+    // Set row height
+    const rowNode = this.gridOptions.api.getPinnedBottomRow(0);
+    rowNode.setRowHeight(rowSettings.height);
+    totalRow.parentElement.style.height = `${rowSettings.height}px`;
+    totalRow.parentElement.parentElement.style.height = `${rowSettings.height}px`;
+    totalRow.parentElement.parentElement.parentElement.style.height = `${rowSettings.height}px`;
+
+    // Apply cell-specific styles to each child in the Total row
+    let iterator = 0;
+    for (const child of totalRow.children) {
+      if (iterator++ === 0) continue;
+
+      child.style.border = 'none';
+      child.style.justifyContent = rowSettings.alignment;
+      child.style.fontFamily = rowSettings.font;
+      child.style.fontSize = `${rowSettings.fontSize}px`;
+      child.style.color = rowSettings.fontColor;
+      child.style.fontWeight = rowSettings.bold ? 'bold' : 'normal';
+      child.style.fontStyle = rowSettings.italic ? 'italic' : 'normal';
+      child.style.textIndent = `${rowSettings.indentation}px`;
+    }
+  }
+
+  /**
+   * Formats the Total row.
    */
   private static formatTotal() {
-    // Get all the categoryCells
     const totalRow = document.querySelector('.ag-row-pinned') as HTMLElement;
+    if (!totalRow) return;
 
-    // Return if totalrow does not exist
-    if (totalRow === null) {
-      return;
-    }
-
-    // Formatting card
     const card = this.formattingSettings.totalCard;
-
-    // Check if the enableCard is enabled
-    if (card.enableCard.value === false) {
+    if (!card.enableCard.value) {
       totalRow.parentElement.parentElement.parentElement.style.display = 'none';
       return;
     }
 
-    const totalTextContent =
-      card.savedName === undefined ? 'Total' : card.savedName.value;
-
-    // Get the rowHeaderFontFamily
-    const rowHeaderFontFamily = card.rowHeaderFontFamily.value;
-
-    // Get the height
-    const height = card.height.value;
-
-    // Get the RowHeaderFontColor
-    const rowHeaderFontColor = card.rowHeaderFontColor.value.value;
-
-    // Get the RowHeaderFontSize
-    const rowHeaderFontSize = card.rowHeaderFontSize.value;
-
-    // Get the RowHeaderBold
-    const rowHeaderBold = card.rowHeaderBold.value;
-
-    // Get the RowHeaderItalic
-    const rowHeaderItalic = card.rowHeaderItalic.value;
-
-    // Get the RowHeaderAlignment
-    const rowHeaderAlignment = card.rowHeaderAlignment.value.value;
-
-    // Get the RowHeaderBackground
-    const rowHeaderBackground = card.rowHeaderBackground.value.value;
-
-    // Get the row font
-    const font = card.fontFamily.value;
-
-    // Get the row font size
-    const fontSize = card.fontSize.value;
-
-    // Get the row font color
-    const fontColor = card.fontColor.value.value;
-
-    // Get the bold value
-    const bold = card.enableBold.value;
-
-    // Get the italic value
-    const italic = card.enableItalic.value;
-
-    // Get the background color
-    const backgroundColor = card.backgroundColor.value.value;
-
-    // Get the border width
-    const borderWidth = card.borderWidth.value;
-
-    // Get the border color
-    const borderColor = hex2rgba(
-      card.borderColor.value.value,
-      card.borderOpacity.value
-    );
-
-    // Get the border style
-    const borderStyle = card.borderStyle.value.value;
-
-    // Get the Top border enabled
-    const topBorder = card.enableTopBorder.value;
-
-    // Get alignment
-    const alignment = card.alignment.value.value;
-
-    // Get the Bottom border enabled
-    const bottomBorder = card.enableBottomBorder.value;
-
-    // Grab the rowHeader and assign type
+    const rowSettings = this.extractTotalRowSettings(card);
     const rowHeader = totalRow.children[0] as HTMLElement;
 
-    // RowHeader Width
-    const rowHeaderWidth = rowHeader.offsetWidth;
-
-    // Apply a background image to the total row combining the rowHeaderBackground and the backgroundColor and rowHeader width
-    totalRow.style.backgroundImage = `linear-gradient(to right, ${hex2rgba(
-      rowHeaderBackground,
-      card.headerOpacity.value
-    )} ${rowHeaderWidth}px, ${hex2rgba(
-      backgroundColor,
-      card.opacity.value
-    )} ${rowHeaderWidth}px)`;
-
-    // Check if rowHeader includes invalid
-    if (rowHeader.textContent.includes('Invalid')) {
-      rowHeader.textContent = 'Total';
-    }
-
-    // Apply the custom label
-    rowHeader.textContent =
-      rowHeader.textContent === 'Total'
-        ? totalTextContent
-        : rowHeader.textContent;
-
-    // Set the rowHeader values to the rowHeader
-    rowHeader.style.fontFamily = rowHeaderFontFamily;
-    rowHeader.style.fontSize = `${rowHeaderFontSize}px`;
-    rowHeader.style.color = rowHeaderFontColor;
-    rowHeader.style.justifyContent = rowHeaderAlignment;
-    rowHeader.style.fontWeight = rowHeaderBold ? 'bold' : 'normal';
-    rowHeader.style.fontStyle = rowHeaderItalic ? 'italic' : 'normal';
-    rowHeader.style.textIndent = `${card.rowHeaderIndentation.value}px`;
-    rowHeader.style.border = 'none';
-
-    // Remove the border from the total row container numerous parents up
-    totalRow.parentElement.parentElement.parentElement.style.border = 'none';
-
-    // Set the top border
-    totalRow.style.borderTop = topBorder
-      ? `${borderWidth}px ${borderStyle} ${borderColor}`
-      : 'none';
-
-    // Set the bottom border
-    totalRow.style.borderBottom = bottomBorder
-      ? `${borderWidth}px ${borderStyle} ${borderColor}`
-      : 'none';
-
-    // Get the row node
-    const rowNode = this.gridOptions.api.getPinnedBottomRow(0);
-
-    // Set the height for multiple containers
-    totalRow.parentElement.style.height = `${height}px`;
-    totalRow.parentElement.parentElement.style.height = `${height}px`;
-    totalRow.parentElement.parentElement.parentElement.style.height = `${height}px`;
-
-    // Set via API to be sure
-    rowNode.setRowHeight(height);
-
-    // Loop through the children
-    // Iterator to skip first child (As it is the rowHeader)
-    let iterator = 0;
-    // Loop through the category cells to find the correct row
-    for (const child of Object(totalRow.children)) {
-      if (iterator === 0) {
-        iterator++;
-        continue;
-      }
-
-      // Remove left and right borders of children
-      child.style.border = 'none';
-
-      // Child alignment
-      child.style.justifyContent = alignment;
-
-      // Set the row font
-      child.style.fontFamily = font;
-
-      // Set the row font size
-      child.style.fontSize = `${fontSize}px`;
-
-      // Set the row font color
-      child.style.color = fontColor;
-
-      // Set the bold
-      child.style.fontWeight = bold ? 'bold' : 'normal';
-
-      // Set the italic
-      child.style.fontStyle = italic ? 'italic' : 'normal';
-
-      // Set the indentation
-      child.style.textIndent = `${card.indentation.value}px`;
-    }
+    this.applyFormattingToTotalRow(totalRow, rowHeader, rowSettings);
   }
+
 
   /**
    * Reorganies the grid after height changes via the API
